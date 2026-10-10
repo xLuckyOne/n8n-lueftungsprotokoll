@@ -1,0 +1,183 @@
+{
+  "name": "Telegram - Nachricht empfangen (Polling)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "8df46629-fc51-4300-b9fd-6b90f7cb7ae9",
+      "name": "Polling jede Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $getWorkflowStaticData('global');\nreturn [{ json: { offset: state.telegramUpdateOffset ?? 0 } }];"
+      },
+      "id": "b143b5cc-34c2-48c5-a694-cc66aeaa4cb7",
+      "name": "Offset laden",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/botREPLACE_WITH_BOT_TOKEN/getUpdates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offset",
+              "value": "={{ $json.offset }}"
+            },
+            {
+              "name": "timeout",
+              "value": "0"
+            },
+            {
+              "name": "allowed_updates",
+              "value": "[\"message\"]"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "5537003f-84c3-43d8-bef3-3842f8c9d5a5",
+      "name": "Telegram getUpdates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first()?.json;\nif (!response?.ok) {\n  throw new Error(`Telegram getUpdates fehlgeschlagen: ${JSON.stringify(response)}`);\n}\n\nconst updates = response.result ?? [];\nif (updates.length === 0) return [];\n\nconst state = $getWorkflowStaticData('global');\nstate.pendingTelegramUpdateOffset = Math.max(...updates.map(update => update.update_id)) + 1;\n\nreturn updates\n  .filter(update => update.message)\n  .map(update => {\n    const message = update.message;\n    const receivedText = message.text || '(keine Textnachricht)';\n    return {\n      json: {\n        chatId: message.chat.id,\n        reply: `Empfangen: ${receivedText}`\n      }\n    };\n  });"
+      },
+      "id": "817249be-1b3f-47ba-b9af-a4c5ae7555d8",
+      "name": "Nachrichten vorbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botREPLACE_WITH_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $json.chatId, text: $json.reply } }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "7a486af1-6bb8-4af4-8e30-94db267d0085",
+      "name": "Empfang bestätigen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $getWorkflowStaticData('global');\nif (state.pendingTelegramUpdateOffset !== undefined) {\n  state.telegramUpdateOffset = state.pendingTelegramUpdateOffset;\n  delete state.pendingTelegramUpdateOffset;\n}\nreturn $input.all();"
+      },
+      "id": "b787f6b6-4c09-45aa-a0b7-53a5e684fa46",
+      "name": "Offset speichern",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Polling jede Minute": {
+      "main": [
+        [
+          {
+            "node": "Offset laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offset laden": {
+      "main": [
+        [
+          {
+            "node": "Telegram getUpdates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram getUpdates": {
+      "main": [
+        [
+          {
+            "node": "Nachrichten vorbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nachrichten vorbereiten": {
+      "main": [
+        [
+          {
+            "node": "Empfang bestätigen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Empfang bestätigen": {
+      "main": [
+        [
+          {
+            "node": "Offset speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "dc8fa032-e682-41ba-a2b7-5d02f440e753",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

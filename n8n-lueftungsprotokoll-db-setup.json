@@ -1,0 +1,30 @@
+{
+  "name": "Lueftungsprotokoll - Datenbank einrichten",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS ventilation_rooms (\n    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n    name TEXT NOT NULL UNIQUE CHECK (length(trim(name)) > 0),\n    sort_order INTEGER NOT NULL,\n    active BOOLEAN NOT NULL DEFAULT true\n);\n\nINSERT INTO ventilation_rooms (name, sort_order)\nVALUES\n    ('Wohnzimmer', 1),\n    ('Schlafzimmer', 2),\n    ('Flur', 3),\n    ('Bad', 4),\n    ('Küche', 5),\n    ('GaesteBad', 6),\n    ('Abstellkammer', 7),\n    ('Witchy', 8)\nON CONFLICT (name) DO UPDATE SET\n    sort_order = EXCLUDED.sort_order,\n    active = true;\n\nCREATE TABLE IF NOT EXISTS ventilation_entries (\n    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n    telegram_user_id BIGINT NOT NULL,\n    room TEXT NOT NULL CHECK (length(trim(room)) > 0),\n    ventilated_at TIMESTAMPTZ NOT NULL,\n    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),\n    temperature_c NUMERIC(5, 2) CHECK (\n        temperature_c IS NULL OR temperature_c BETWEEN -30 AND 80\n    ),\n    relative_humidity_percent NUMERIC(5, 2) CHECK (\n        relative_humidity_percent IS NULL OR relative_humidity_percent BETWEEN 0 AND 100\n    ),\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n\nCREATE INDEX IF NOT EXISTS ventilation_entries_user_time_idx\n    ON ventilation_entries (telegram_user_id, ventilated_at DESC);\n\nCREATE TABLE IF NOT EXISTS telegram_conversations (\n    telegram_user_id BIGINT PRIMARY KEY,\n    chat_id BIGINT NOT NULL,\n    state TEXT NOT NULL CHECK (\n        state IN ('room', 'ventilated_at', 'duration', 'temperature', 'humidity', 'confirm')\n    ),\n    draft JSONB NOT NULL DEFAULT '{}'::jsonb,\n    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);",
+        "options": {}
+      },
+      "id": "a9ce11d6-4a20-495c-a11e-ff2d7cb37424",
+      "name": "Datenbankschema anlegen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        300
+      ]
+    }
+  ],
+  "connections": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b02923d1-5ee4-485b-9be0-cff773f2b8e7",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

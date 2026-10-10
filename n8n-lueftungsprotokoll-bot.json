@@ -1,0 +1,311 @@
+{
+  "name": "Lueftungsprotokoll - Telegram V1",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "bf3a326c-c908-4608-ad58-07518b4e9d52",
+      "name": "Alle 15 Sekunden pollen",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $getWorkflowStaticData('global');\nreturn [{ json: { offset: state.telegramUpdateOffset ?? 0 } }];"
+      },
+      "id": "352383da-27e4-4313-b2e4-5820172a463e",
+      "name": "Offset laden",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.telegram.org/botREPLACE_WITH_NEW_BOT_TOKEN/getUpdates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offset",
+              "value": "={{ $json.offset }}"
+            },
+            {
+              "name": "timeout",
+              "value": "0"
+            },
+            {
+              "name": "allowed_updates",
+              "value": "[\"message\",\"callback_query\"]"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "c75b46cb-a5a7-487a-a8e6-ea59ac7a110b",
+      "name": "Telegram Updates abrufen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first()?.json;\nif (!response?.ok) {\n  throw new Error(`Telegram getUpdates fehlgeschlagen: ${JSON.stringify(response)}`);\n}\n\nconst updates = response.result ?? [];\nif (updates.length === 0) return [];\n\nconst allowedUserIds = new Set(['REPLACE_WITH_YOUR_TELEGRAM_USER_ID']);\nif (allowedUserIds.has('REPLACE_WITH_YOUR_TELEGRAM_USER_ID')) {\n  throw new Error('Bitte in diesem Code-Node REPLACE_WITH_YOUR_TELEGRAM_USER_ID durch deine numerische Telegram-ID ersetzen.');\n}\n\nconst state = $getWorkflowStaticData('global');\nstate.telegramUpdateOffset = Math.max(...updates.map(update => update.update_id)) + 1;\n\nreturn updates.flatMap(update => {\n  const message = update.message;\n  const callback = update.callback_query;\n  const from = message?.from ?? callback?.from;\n  const chatId = message?.chat?.id ?? callback?.message?.chat?.id;\n  if (!from || !chatId || from.is_bot || !allowedUserIds.has(String(from.id))) return [];\n\n  return [{\n    json: {\n      telegramUserId: String(from.id),\n      chatId: String(chatId),\n      updateId: String(update.update_id),\n      text: message?.text ?? null,\n      callbackData: callback?.data ?? null,\n      callbackQueryId: callback?.id ?? null\n    }\n  }];\n});"
+      },
+      "id": "bdd12d98-6313-42d4-837c-3be63c0c8021",
+      "name": "Updates filtern",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  $1::bigint AS telegram_user_id,\n  $2::bigint AS chat_id,\n  $3::bigint AS update_id,\n  $4::text AS message_text,\n  $5::text AS callback_data,\n  $6::text AS callback_query_id,\n  c.state,\n  c.draft\nFROM (VALUES (1)) AS seed(value)\nLEFT JOIN telegram_conversations AS c\n  ON c.telegram_user_id = $1::bigint;",
+        "options": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.telegramUserId, $json.chatId, $json.updateId, $json.text, $json.callbackData, $json.callbackQueryId] }}"
+        }
+      },
+      "id": "a2b115d8-99c0-4874-851f-329aa0e5e202",
+      "name": "Gespräch laden",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rooms = ['Wohnzimmer', 'Schlafzimmer', 'Flur', 'Bad', 'Küche', 'GaesteBad', 'Abstellkammer', 'Witchy'];\nconst current = $json;\nlet draft = current.draft ?? {};\nif (typeof draft === 'string') draft = JSON.parse(draft);\nlet state = current.state ?? null;\nlet removeConversation = false;\nlet saveEntry = false;\nlet reply = '';\nlet keyboard = undefined;\nconst text = String(current.message_text ?? '').trim();\nconst callback = String(current.callback_data ?? '');\nconst command = text.split(/\\s+/)[0].toLowerCase();\nconst berlinTime = value => new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));\nconst buttons = rows => ({ inline_keyboard: rows });\nconst roomKeyboard = buttons([\n  [{ text: rooms[0], callback_data: `room:${rooms[0]}` }, { text: rooms[1], callback_data: `room:${rooms[1]}` }],\n  [{ text: rooms[2], callback_data: `room:${rooms[2]}` }, { text: rooms[3], callback_data: `room:${rooms[3]}` }],\n  [{ text: rooms[4], callback_data: `room:${rooms[4]}` }, { text: rooms[5], callback_data: `room:${rooms[5]}` }],\n  [{ text: rooms[6], callback_data: `room:${rooms[6]}` }, { text: rooms[7], callback_data: `room:${rooms[7]}` }]\n]);\nconst methodKeyboard = buttons([\n  [{ text: 'Stoßlüften', callback_data: 'method:shock' }, { text: 'Querlüften', callback_data: 'method:cross' }],\n  [{ text: 'Kippfenster', callback_data: 'method:tilted_window' }, { text: 'Sonstiges', callback_data: 'method:other' }],\n  [{ text: 'Überspringen', callback_data: 'skip' }]\n]);\nconst skipKeyboard = buttons([[{ text: 'Überspringen', callback_data: 'skip' }]]);\nconst cancelKeyboard = buttons([[{ text: 'Abbrechen', callback_data: 'cancel' }]]);\nconst confirmationKeyboard = buttons([[{ text: 'Speichern', callback_data: 'save' }, { text: 'Abbrechen', callback_data: 'cancel' }]]);\n\nif (command === '/start' || command === '/neu') {\n  state = 'ventilated_at';\n  draft = {};\n  reply = 'Neuer Lüftungseintrag. Wann wurde gelüftet? Antworte mit „jetzt“ oder Datum und Uhrzeit im Format TT.MM.JJJJ HH:MM (deutsche Ortszeit).';\n  keyboard = buttons([[{ text: 'Jetzt', callback_data: 'time:now' }, { text: 'Abbrechen', callback_data: 'cancel' }]]);\n} else if (command === '/abbrechen' || callback === 'cancel') {\n  state = null;\n  draft = {};\n  removeConversation = true;\n  reply = 'Eingabe abgebrochen. Für einen neuen Eintrag sende /neu.';\n} else if (state === 'ventilated_at') {\n  if (callback === 'time:now' || /^jetzt$/i.test(text)) {\n    draft.ventilated_at = new Date().toISOString();\n    state = 'room';\n    reply = 'Welcher Raum?';\n    keyboard = roomKeyboard;\n  } else {\n    const match = text.match(/^(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})\\s+(\\d{1,2}):(\\d{2})$/);\n    if (!match) {\n      reply = 'Bitte „jetzt“ wählen oder Datum und Uhrzeit als TT.MM.JJJJ HH:MM eingeben.';\n      keyboard = buttons([[{ text: 'Jetzt', callback_data: 'time:now' }, { text: 'Abbrechen', callback_data: 'cancel' }]]);\n    } else {\n      const [, d, m, y, h, min] = match;\n      const wanted = { day: Number(d), month: Number(m), year: Number(y), hour: Number(h), minute: Number(min) };\n      const target = Date.UTC(wanted.year, wanted.month - 1, wanted.day, wanted.hour, wanted.minute);\n      const utcCheck = new Date(target);\n      if (utcCheck.getUTCFullYear() !== wanted.year || utcCheck.getUTCMonth() !== wanted.month - 1 || utcCheck.getUTCDate() !== wanted.day || wanted.hour > 23 || wanted.minute > 59) {\n        reply = 'Das Datum oder die Uhrzeit ist ungültig. Bitte erneut als TT.MM.JJJJ HH:MM eingeben.';\n      } else {\n        const formatter = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });\n        const candidates = [];\n        for (const offsetMinutes of [-120, -60, 0, 60, 120, 180]) {\n          const candidate = target - offsetMinutes * 60000;\n          const parts = Object.fromEntries(formatter.formatToParts(new Date(candidate)).map(part => [part.type, part.value]));\n          if (Number(parts.year) === wanted.year && Number(parts.month) === wanted.month && Number(parts.day) === wanted.day && Number(parts.hour) === wanted.hour && Number(parts.minute) === wanted.minute) candidates.push(candidate);\n        }\n        if (candidates.length === 0) {\n          reply = 'Diese Ortszeit gibt es wegen der Zeitumstellung nicht. Bitte eine andere Uhrzeit eingeben.';\n        } else {\n          draft.ventilated_at = new Date(Math.min(...candidates)).toISOString();\n          state = 'room';\n          reply = 'Welcher Raum?';\n          keyboard = roomKeyboard;\n        }\n      }\n    }\n  }\n} else if (state === 'room') {\n  const room = callback.startsWith('room:') ? callback.slice(5) : text;\n  if (!rooms.includes(room)) {\n    reply = 'Bitte wähle einen Raum über die Buttons.';\n    keyboard = roomKeyboard;\n  } else {\n    draft.room = room;\n    state = 'duration';\n    reply = `Wie viele Minuten wurde in ${room} gelüftet? Bitte eine ganze Zahl von 1 bis 480 eingeben.`;\n    keyboard = cancelKeyboard;\n  }\n} else if (state === 'duration') {\n  const duration = Number(text);\n  if (!Number.isInteger(duration) || duration < 1 || duration > 480) {\n    reply = 'Bitte eine ganze Dauer zwischen 1 und 480 Minuten eingeben.';\n    keyboard = cancelKeyboard;\n  } else {\n    draft.duration_minutes = duration;\n    state = 'ventilation_method';\n    reply = 'Wie wurde gelüftet?';\n    keyboard = methodKeyboard;\n  }\n} else if (state === 'ventilation_method') {\n  const method = callback.startsWith('method:') ? callback.slice(7) : '';\n  if (method && !['shock', 'cross', 'tilted_window', 'other'].includes(method) && callback !== 'skip') {\n    reply = 'Bitte wähle eine Lüftungsart oder überspringe diesen Schritt.';\n    keyboard = methodKeyboard;\n  } else {\n    draft.ventilation_method = method || null;\n    state = 'temperature';\n    reply = 'Raumtemperatur in °C? Zahl eingeben oder überspringen.';\n    keyboard = skipKeyboard;\n  }\n} else if (state === 'temperature') {\n  if (callback === 'skip' || /^überspringen$/i.test(text)) {\n    draft.temperature_c = null;\n  } else {\n    const value = Number(text.replace(',', '.').replace(/\\s*°\\s*c?$/i, ''));\n    if (!Number.isFinite(value) || value < -30 || value > 80) {\n      reply = 'Bitte eine Temperatur zwischen -30 und 80 °C eingeben oder überspringen.';\n      keyboard = skipKeyboard;\n    } else {\n      draft.temperature_c = value;\n    }\n  }\n  if (reply === '') {\n    state = 'humidity';\n    reply = 'Relative Luftfeuchtigkeit in Prozent? Zahl eingeben oder überspringen.';\n    keyboard = skipKeyboard;\n  }\n} else if (state === 'humidity') {\n  if (callback === 'skip' || /^überspringen$/i.test(text)) {\n    draft.relative_humidity_percent = null;\n  } else {\n    const value = Number(text.replace(',', '.').replace(/\\s*%$/, ''));\n    if (!Number.isFinite(value) || value < 0 || value > 100) {\n      reply = 'Bitte eine Luftfeuchtigkeit zwischen 0 und 100 % eingeben oder überspringen.';\n      keyboard = skipKeyboard;\n    } else {\n      draft.relative_humidity_percent = value;\n    }\n  }\n  if (reply === '') {\n    state = 'confirm';\n    const methodNames = { shock: 'Stoßlüften', cross: 'Querlüften', tilted_window: 'Kippfenster', other: 'Sonstiges' };\n    reply = `Bitte prüfen:\\nRaum: ${draft.room}\\nZeit: ${berlinTime(draft.ventilated_at)}\\nDauer: ${draft.duration_minutes} Minuten\\nLüftungsart: ${methodNames[draft.ventilation_method] ?? 'nicht angegeben'}\\nTemperatur: ${draft.temperature_c == null ? 'nicht angegeben' : `${draft.temperature_c} °C`}\\nLuftfeuchtigkeit: ${draft.relative_humidity_percent == null ? 'nicht angegeben' : `${draft.relative_humidity_percent} %`}\\n\\nEintrag speichern?`;\n    keyboard = confirmationKeyboard;\n  }\n} else if (state === 'confirm') {\n  if (callback === 'save') {\n    saveEntry = true;\n    removeConversation = true;\n    state = null;\n    reply = 'Eintrag wurde gespeichert. Für einen weiteren sende /neu.';\n  } else {\n    reply = 'Bitte bestätige mit „Speichern“ oder brich ab.';\n    keyboard = confirmationKeyboard;\n  }\n} else {\n  state = null;\n  draft = {};\n  reply = 'Hallo! Sende /neu, um einen Lüftungseintrag anzulegen.';\n}\n\nreturn [{ json: {\n  telegramUserId: current.telegram_user_id,\n  chatId: current.chat_id,\n  callbackQueryId: current.callback_query_id,\n  state,\n  draft,\n  removeConversation,\n  saveEntry,\n  reply,\n  replyMarkup: keyboard ?? null\n} }];"
+      },
+      "id": "d3d055c9-1782-49eb-851a-8dd759151f78",
+      "name": "Eingabe verarbeiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH saved AS (\n  INSERT INTO ventilation_entries (\n    telegram_user_id, room, ventilated_at, duration_minutes,\n    ventilation_method, temperature_c, relative_humidity_percent\n  )\n  SELECT $1::bigint, $7::text, $8::timestamptz, $9::integer,\n         $10::text, $11::numeric, $12::numeric\n  WHERE $6::boolean\n  RETURNING id\n), conversation AS (\n  INSERT INTO telegram_conversations (telegram_user_id, chat_id, state, draft, updated_at)\n  SELECT $1::bigint, $2::bigint, $3::text, $4::jsonb, now()\n  WHERE NOT $5::boolean AND NOT $6::boolean\n  ON CONFLICT (telegram_user_id) DO UPDATE SET\n    chat_id = EXCLUDED.chat_id,\n    state = EXCLUDED.state,\n    draft = EXCLUDED.draft,\n    updated_at = now()\n  RETURNING telegram_user_id\n), deleted AS (\n  DELETE FROM telegram_conversations\n  WHERE telegram_user_id = $1::bigint AND ($5::boolean OR $6::boolean)\n  RETURNING telegram_user_id\n)\nSELECT\n  $2::bigint AS chat_id,\n  $13::text AS reply_text,\n  $14::jsonb AS reply_markup,\n  $15::text AS callback_query_id,\n  (SELECT id FROM saved) AS entry_id;",
+        "options": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.telegramUserId, $json.chatId, $json.state, JSON.stringify($json.draft), $json.removeConversation, $json.saveEntry, $json.draft.room ?? null, $json.draft.ventilated_at ?? null, $json.draft.duration_minutes ?? null, $json.draft.ventilation_method ?? null, $json.draft.temperature_c ?? null, $json.draft.relative_humidity_percent ?? null, $json.reply, JSON.stringify($json.replyMarkup), $json.callbackQueryId] }}"
+        }
+      },
+      "id": "01022f4d-82ad-472d-9053-3b57d38f6590",
+      "name": "Eintrag oder Entwurf speichern",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botREPLACE_WITH_NEW_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $json.chat_id, text: $json.reply_text, reply_markup: $json.reply_markup } }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "1fd14bea-b3b6-4e3d-888c-b4589a2d44bd",
+      "name": "Antwort senden",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b3ef56ef-32bf-4c47-8fbd-cfe639bec97d",
+              "leftValue": "={{ $json.callback_query_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "399e307e-8484-42b6-b118-dd5226740a6a",
+      "name": "Inline-Button verwendet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botREPLACE_WITH_NEW_BOT_TOKEN/answerCallbackQuery",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { callback_query_id: $json.callback_query_id } }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "7be0c165-1e2f-4422-9e90-f434961f0672",
+      "name": "Button-Klick bestätigen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Alle 15 Sekunden pollen": {
+      "main": [
+        [
+          {
+            "node": "Offset laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offset laden": {
+      "main": [
+        [
+          {
+            "node": "Telegram Updates abrufen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Updates abrufen": {
+      "main": [
+        [
+          {
+            "node": "Updates filtern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Updates filtern": {
+      "main": [
+        [
+          {
+            "node": "Gespräch laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gespräch laden": {
+      "main": [
+        [
+          {
+            "node": "Eingabe verarbeiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eingabe verarbeiten": {
+      "main": [
+        [
+          {
+            "node": "Eintrag oder Entwurf speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eintrag oder Entwurf speichern": {
+      "main": [
+        [
+          {
+            "node": "Antwort senden",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Inline-Button verwendet?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inline-Button verwendet?": {
+      "main": [
+        [
+          {
+            "node": "Button-Klick bestätigen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9bd582c0-0e62-4a0c-8610-94945dd5d1db",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
