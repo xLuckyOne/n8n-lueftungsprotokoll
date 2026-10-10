@@ -1,3 +1,4 @@
-#Secrets - obv.
-Secrets.env
-secrets.env
+# Local secrets and environment files
+*.env
+.env.*
+!.env.example

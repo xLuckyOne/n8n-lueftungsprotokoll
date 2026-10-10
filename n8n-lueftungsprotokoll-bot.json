@@ -23,6 +23,19 @@
     },
     {
       "parameters": {
+        "jsCode": "const config = {\n  botToken: 'YOUR_TELEGRAM_BOT_TOKEN',\n  allowedUserIds: [] // Numerische Telegram User-IDs als Strings eintragen, z. B. ['123456789', '987654321']\n};\n\nif (!config.botToken || config.botToken === 'YOUR_TELEGRAM_BOT_TOKEN') {\n  throw new Error('Bitte den Bot-Token im Node Konfiguration eintragen.');\n}\nif (!Array.isArray(config.allowedUserIds) || config.allowedUserIds.length === 0 || config.allowedUserIds.some(id => !/^[0-9]+$/.test(String(id)))) {\n  throw new Error('Bitte mindestens eine gültige numerische Telegram User-ID im Node Konfiguration eintragen.');\n}\n\nconfig.allowedUserIds = config.allowedUserIds.map(String);\nreturn [{ json: config }];"
+      },
+      "id": "c6aa229b-6cef-43a9-b23c-907f30131e10",
+      "name": "Konfiguration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        100
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "const state = $getWorkflowStaticData('global');\nreturn [{ json: { offset: state.telegramUpdateOffset ?? 0 } }];"
       },
       "id": "352383da-27e4-4313-b2e4-5820172a463e",
@@ -36,7 +49,7 @@
     },
     {
       "parameters": {
-        "url": "https://api.telegram.org/botREPLACE_WITH_NEW_BOT_TOKEN/getUpdates",
+        "url": "={{ 'https://api.telegram.org/bot' + $('Konfiguration').first().json.botToken + '/getUpdates' }}",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -69,7 +82,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.first()?.json;\nif (!response?.ok) {\n  throw new Error(`Telegram getUpdates fehlgeschlagen: ${JSON.stringify(response)}`);\n}\n\nconst updates = response.result ?? [];\nif (updates.length === 0) return [];\n\nconst allowedUserIds = new Set(['REPLACE_WITH_YOUR_TELEGRAM_USER_ID']);\nif (allowedUserIds.has('REPLACE_WITH_YOUR_TELEGRAM_USER_ID')) {\n  throw new Error('Bitte in diesem Code-Node REPLACE_WITH_YOUR_TELEGRAM_USER_ID durch deine numerische Telegram-ID ersetzen.');\n}\n\nconst state = $getWorkflowStaticData('global');\nstate.telegramUpdateOffset = Math.max(...updates.map(update => update.update_id)) + 1;\n\nreturn updates.flatMap(update => {\n  const message = update.message;\n  const callback = update.callback_query;\n  const from = message?.from ?? callback?.from;\n  const chatId = message?.chat?.id ?? callback?.message?.chat?.id;\n  if (!from || !chatId || from.is_bot || !allowedUserIds.has(String(from.id))) return [];\n\n  return [{\n    json: {\n      telegramUserId: String(from.id),\n      chatId: String(chatId),\n      updateId: String(update.update_id),\n      text: message?.text ?? null,\n      callbackData: callback?.data ?? null,\n      callbackQueryId: callback?.id ?? null\n    }\n  }];\n});"
+        "jsCode": "const response = $input.first()?.json;\nif (!response?.ok) {\n  throw new Error(`Telegram getUpdates fehlgeschlagen: ${JSON.stringify(response)}`);\n}\n\nconst updates = response.result ?? [];\nif (updates.length === 0) return [];\n\nconst config = $('Konfiguration').first().json;\nconst allowedUserIds = new Set(config.allowedUserIds.map(String));\n\nconst state = $getWorkflowStaticData('global');\nstate.telegramUpdateOffset = Math.max(...updates.map(update => update.update_id)) + 1;\n\nreturn updates.flatMap(update => {\n  const message = update.message;\n  const callback = update.callback_query;\n  const from = message?.from ?? callback?.from;\n  const chatId = message?.chat?.id ?? callback?.message?.chat?.id;\n  if (!from || !chatId || from.is_bot || !allowedUserIds.has(String(from.id))) return [];\n\n  return [{\n    json: {\n      telegramUserId: String(from.id),\n      chatId: String(chatId),\n      updateId: String(update.update_id),\n      text: message?.text ?? null,\n      callbackData: callback?.data ?? null,\n      callbackQueryId: callback?.id ?? null\n    }\n  }];\n});"
       },
       "id": "bdd12d98-6313-42d4-837c-3be63c0c8021",
       "name": "Updates filtern",
@@ -114,7 +127,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH saved AS (\n  INSERT INTO ventilation_entries (\n    telegram_user_id, room, ventilated_at, duration_minutes,\n    ventilation_method, temperature_c, relative_humidity_percent\n  )\n  SELECT $1::bigint, $7::text, $8::timestamptz, $9::integer,\n         $10::text, $11::numeric, $12::numeric\n  WHERE $6::boolean\n  RETURNING id\n), conversation AS (\n  INSERT INTO telegram_conversations (telegram_user_id, chat_id, state, draft, updated_at)\n  SELECT $1::bigint, $2::bigint, $3::text, $4::jsonb, now()\n  WHERE NOT $5::boolean AND NOT $6::boolean\n  ON CONFLICT (telegram_user_id) DO UPDATE SET\n    chat_id = EXCLUDED.chat_id,\n    state = EXCLUDED.state,\n    draft = EXCLUDED.draft,\n    updated_at = now()\n  RETURNING telegram_user_id\n), deleted AS (\n  DELETE FROM telegram_conversations\n  WHERE telegram_user_id = $1::bigint AND ($5::boolean OR $6::boolean)\n  RETURNING telegram_user_id\n)\nSELECT\n  $2::bigint AS chat_id,\n  $13::text AS reply_text,\n  $14::jsonb AS reply_markup,\n  $15::text AS callback_query_id,\n  (SELECT id FROM saved) AS entry_id;",
+        "query": "WITH saved AS (\n  INSERT INTO ventilation_entries (\n    telegram_user_id, room, ventilated_at, duration_minutes,\n    ventilation_method, temperature_c, relative_humidity_percent\n  )\n  SELECT $1::bigint, $7::text, $8::timestamptz, $9::integer,\n         $10::text, $11::numeric, $12::numeric\n  WHERE $6::boolean\n  RETURNING id\n), conversation AS (\n  INSERT INTO telegram_conversations (telegram_user_id, chat_id, state, draft, updated_at)\n  SELECT $1::bigint, $2::bigint, $3::text, $4::jsonb, now()\n          WHERE NOT $5::boolean AND NOT $6::boolean AND $3::text IS NOT NULL\n  ON CONFLICT (telegram_user_id) DO UPDATE SET\n    chat_id = EXCLUDED.chat_id,\n    state = EXCLUDED.state,\n    draft = EXCLUDED.draft,\n    updated_at = now()\n  RETURNING telegram_user_id\n), deleted AS (\n  DELETE FROM telegram_conversations\n  WHERE telegram_user_id = $1::bigint AND ($5::boolean OR $6::boolean)\n  RETURNING telegram_user_id\n)\nSELECT\n  $2::bigint AS chat_id,\n  $13::text AS reply_text,\n  $14::jsonb AS reply_markup,\n  $15::text AS callback_query_id,\n  (SELECT id FROM saved) AS entry_id;",
         "options": {
           "queryBatching": "independently",
           "queryReplacement": "={{ [$json.telegramUserId, $json.chatId, $json.state, JSON.stringify($json.draft), $json.removeConversation, $json.saveEntry, $json.draft.room ?? null, $json.draft.ventilated_at ?? null, $json.draft.duration_minutes ?? null, $json.draft.ventilation_method ?? null, $json.draft.temperature_c ?? null, $json.draft.relative_humidity_percent ?? null, $json.reply, JSON.stringify($json.replyMarkup), $json.callbackQueryId] }}"
@@ -132,10 +145,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.telegram.org/botREPLACE_WITH_NEW_BOT_TOKEN/sendMessage",
+        "url": "={{ 'https://api.telegram.org/bot' + $('Konfiguration').first().json.botToken + '/sendMessage' }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $json.chat_id, text: $json.reply_text, reply_markup: $json.reply_markup } }}",
+        "jsonBody": "={{ { chat_id: $json.chat_id, text: $json.reply_text, ...($json.reply_markup ? { reply_markup: $json.reply_markup } : {}) } }}",
         "options": {
           "timeout": 10000
         }
@@ -186,7 +199,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.telegram.org/botREPLACE_WITH_NEW_BOT_TOKEN/answerCallbackQuery",
+        "url": "={{ 'https://api.telegram.org/bot' + $('Konfiguration').first().json.botToken + '/answerCallbackQuery' }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ { callback_query_id: $json.callback_query_id } }}",
@@ -206,6 +219,17 @@
   ],
   "connections": {
     "Alle 15 Sekunden pollen": {
+      "main": [
+        [
+          {
+            "node": "Konfiguration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Konfiguration": {
       "main": [
         [
           {
